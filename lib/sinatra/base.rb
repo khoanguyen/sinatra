@@ -704,6 +704,8 @@ module Sinatra
     include Rack::Utils
     include Helpers
     include Templates
+    
+    @@register_formatters = {}
 
     attr_accessor :app
     attr_reader   :template_cache
@@ -743,6 +745,14 @@ module Sinatra
       end
 
       @response.finish
+    end
+    
+    # Add body formaters 
+    def self.body_formatters(map) 
+      map.each do |k,v|        
+        mime = mime_type(k) || k
+        @@register_formatters[mime] = v
+      end 
     end
 
     # Access settings defined with Base.set.
@@ -786,6 +796,25 @@ module Sinatra
     end
 
   private
+    # Initialize default formatters
+    # Only JSON is supported at the moment
+    def init_default_formatters          
+      unless @formatters
+        @formatters = {
+          mime_type(:json) => Proc.new { |content| content.to_json }
+        }
+        @formatters = @formatters.merge(@@register_formatters)
+      end
+    end
+    
+    # Format the input with appropriate formatter
+    def format(input)
+      init_default_formatters                       
+      mime = response['Content-Type'] ? response['Content-Type'].split(";")[0] : nil
+      return input unless @formatters && @formatters.has_key?(mime) 
+      @formatters[mime].call(input)
+    end
+  
     # Run filters defined on the class and all superclasses.
     def filter!(type, base = settings)
       filter! type, base.superclass if base.superclass.respond_to?(:filters)
@@ -797,7 +826,7 @@ module Sinatra
       if routes = base.routes[@request.request_method]
         routes.each do |pattern, keys, conditions, block|
           pass_block = process_route(pattern, keys, conditions) do |*args|
-            route_eval { block[*args] }
+            route_eval { format(block[*args]) }
           end
         end
       end
